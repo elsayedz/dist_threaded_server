@@ -12,6 +12,7 @@ use std::fs;
 use std::sync::Arc;
 
 use std::thread;
+use std::thread::sleep;
 use std::time::Duration;
 
 use httparse;
@@ -34,10 +35,10 @@ impl ServersInfo {
         ip_id.insert("1".to_string(), _ip2.clone());
         ip_id.insert("2".to_string(), _ip3.clone());
     
-        println!("------------Constructor-----------");
-        for (key, value) in &ip_id {
-            println!("Server id: {} --> IP {}", key, value);
-        }
+        // println!("------------Constructor-----------");
+        // for (key, value) in &ip_id {
+        //     println!("Server id: {} --> IP {}", key, value);
+        // }
         
         Self {
             id_to_ip: Arc::new(Mutex::new(ip_id)),
@@ -48,6 +49,17 @@ impl ServersInfo {
 struct Server {
     servers_info: ServersInfo
 }
+async fn send_request() -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let request = client.get("http://10.65.192.142:50051").header("fn", "force_failure")
+    .send()
+    .await?
+    .text()
+    .await?;
+    // let body = client.get("http://127.0.0.1:7878").send()
+
+    Ok(request)
+}
 
 impl Server {
     fn new(_ip1:String, _ip2:String, _ip3:String, _my_id:String) -> Self {
@@ -56,8 +68,8 @@ impl Server {
         }
     }
 
-    async fn init_election(&self, headers: & mut [Header<'_>]) {
-        println!("Init election called");
+    async fn init_election(&self, headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
+        println!("-------------Init election called from {}:{}-------------", requester_info.ip(), requester_info.port());
         let mut id = String::new();
         for header in headers {
             if header.name == "id" {
@@ -75,11 +87,115 @@ impl Server {
             }
         }
         println!("min_id: {}", min_id);
+
+        match map.get(&min_id.to_string()){
+            Some(ip) => {
+                println!("Sending request to: {}", ip);
+                let client = reqwest::Client::new();
+                let _request = client.get("http://10.65.192.142:50050")
+                .header("fn", "force_failure")
+                .send().await;
+               
+            },
+            None => {
+                println!("Couldn't find min id in Map");
+            }
+        }
+
+        
+
+        let _res = send_request().await;
+        println!("---------------------------");
+        
+        Ok(format!("min_id: {}", min_id))
+
     }
 
-    async fn force_failure(&self){
-        println!("Force failure called");
+    async fn force_failure(&self, headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
+        println!("-------------Force failure called from {}:{}-------------", requester_info.ip(), requester_info.port());
+        sleep(Duration::from_secs(5));
+        println!("Server is UP again");
+
+        let mut ip_map = self.servers_info.id_to_ip.lock().await;
+        let my_id = self.servers_info.my_id.lock().await;
+        
+        let my_ip = ip_map.get(&*my_id).unwrap().clone();       // My cuurent ip
+        let max_id = ip_map.keys().max().unwrap().clone();      // Max id in the network
+        ip_map.remove(&*my_id);                 // Remove my id from the map
+        
+        let id_as_int = max_id.parse::<i32>().unwrap();        // Convert max id to int
+        let new_id = id_as_int + 1;     // Increment max id by 1
+        println!("Removed myself from the map");
+
+
+        ip_map.insert(new_id.to_string(), my_ip.clone());
+        println!("Inserted new id in the map");
+        
+        for (key, value) in &*ip_map {
+            if key != &*my_id {
+                let client = reqwest::Client::new();
+                let _request = client.get(value).header("fn", "broadcast_id")
+                .header("old_id", &*my_id)
+                .header("new_id", &new_id.to_string())
+                .header("new_ip", &my_ip)
+                .send()
+                .await?
+                .text()
+                .await?;
+            }
+            println!("Server id: {} --> IP {}", key, value);
+        }
+        
+        println!("---------------------------");
+        
+        
+        Ok(format!("Force failure called"))
     }
+
+
+    async fn broadcast_id(&self, headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
+        println!("-------------Broadcast id called from {}:{}-------------", requester_info.ip(), requester_info.port());
+        let mut old_id = String::new();
+        let mut new_id = String::new();
+        let mut new_ip = String::new();
+        for header in headers {
+            if header.name == "old_id" {
+                old_id = String::from_utf8(header.value.to_vec()).unwrap();
+            }
+            if header.name == "new_id" {
+                new_id = String::from_utf8(header.value.to_vec()).unwrap();
+            }
+            if header.name == "new_ip" {
+                new_ip = String::from_utf8(header.value.to_vec()).unwrap();
+            }
+        }
+        println!("old_id: {}", old_id);
+        println!("new_id: {}", new_id);
+        println!("new_ip: {}", new_ip);
+
+        let mut ip_map = self.servers_info.id_to_ip.lock().await;
+        ip_map.remove(&old_id);
+        ip_map.insert(new_id, new_ip);
+
+        for (key, value) in &*ip_map {
+            println!("Server id: {} --> IP {}", key, value);
+        }
+        println!("---------------------------");
+        Ok(format!("Broadcast id called"))
+    }
+
+    async fn ping(&self, headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
+        println!("Ping called");
+        let client = reqwest::Client::new();
+        let _request = client.get(requester_info.ip().to_string()).header("fn", "force_failure")
+        .send()
+        .await?
+        .text()
+        .await?;
+        println!("ACK!");
+        Ok(format!("Ping called"))
+    }
+
 }
 
 
@@ -106,7 +222,8 @@ async fn main() {
     let ip2 = format!("{}{}","http://" ,servers[1]);
     let ip3 = format!("{}{}","http://" ,servers[2]);
     let my_id = format!("{}", main_server_index.to_string());
-    println!("Main server listening on: {}", servers[*main_server_index]);
+    println!("Main server listening on index: {}", *main_server_index);
+    println!("Server1 listening on {}", ip1);
     println!("Server2 listening on {}", ip2);
     println!("Server3 listening on {}", ip3);
 
@@ -115,12 +232,13 @@ async fn main() {
     let ip2_ref = Arc::new(Mutex::new(ip2));
     let ip3_ref = Arc::new(Mutex::new(ip3));
     let my_id_ref = Arc::new(Mutex::new(my_id));
+    println!("Main server {}", server_addr);
     let listener = TcpListener::bind(server_addr).unwrap();
     
     
     for stream in listener.incoming() {
         let stream = stream.unwrap();
-        
+        //print the incoming request ip  address
         let ip1_ref = Arc::clone(&ip1_ref);
         let ip2_ref = Arc::clone(&ip2_ref);
         let ip3_ref = Arc::clone(&ip3_ref);
@@ -137,34 +255,41 @@ async fn handle_connection(mut stream: TcpStream, ip1: Arc<Mutex<String>>, ip2:A
     let mut buffer = [0; 1024];
     stream.read(&mut buffer).unwrap();
 
-    println!("Request: {}", String::from_utf8_lossy(&buffer[..]));
+    // println!("Request: {}", String::from_utf8_lossy(&buffer[..]));
 
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut req = httparse::Request::new(&mut headers);
     let res = req.parse(&buffer).unwrap();
 
-    println!("res: {:?}", res);
-    println!("req: {:?}", req);
+    // println!("res: {:?}", res);
+    // println!("req: {:?}", req);
     
     let mut fn_name: String = String::new();
     for header in req.headers[..].iter() {
         if header.name == "fn" {
             fn_name = std::str::from_utf8(header.value).unwrap().to_string();
-            println!("fn_name: {}", fn_name);
+            // println!("fn_name: {}", fn_name);
         }
     }
     let ip1 = ip1.lock().await;
     let ip2 = ip2.lock().await;
     let ip3 = ip3.lock().await;
     let my_id = my_id.lock().await;
-
+    let requester_info = stream.peer_addr().unwrap();
+    
     let server =Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string());
     match fn_name.as_str() {
         "init_election" => {
-            server.init_election(req.headers).await;
+            let _res = server.init_election(req.headers, requester_info).await;
         },
         "force_failure" => {
-            server.force_failure().await;
+            let _res = server.force_failure(req.headers, requester_info).await;
+        },
+        "broadcast_id" => {
+            let _res = server.broadcast_id(req.headers, requester_info).await;
+        },
+        "ping" => {
+            let _res = server.ping(req.headers, requester_info).await;
         },
         _ => {
             println!("No function found");
