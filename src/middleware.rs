@@ -1,6 +1,8 @@
 mod thread_pool;
 
 use std::env;
+use std::thread::sleep;
+use std::time::Duration;
 
 use rand::Rng;
 use rand::SeedableRng;
@@ -27,7 +29,7 @@ async fn main(){
             let random_index = rng.gen_range(0..=2);
             println!("Thread spawned");
             
-            let response = send_request(ips_vec[1].clone()).await;
+            let response = send_request(ips_vec[random_index].clone()).await;
             println!("Sent request to server {}", random_index);
             println!("Init election response={:?}", response);
         }
@@ -37,10 +39,10 @@ async fn main(){
     let client = reqwest::Client::new();
     loop {
         
-        // let _request = client.get(ips_vec_2[i].clone()).header("fn", "ping")
-        // .send()
-        // .await;
-
+        let _request = client.get(ips_vec_2[i].clone()).header("fn", "ping")
+        .send()
+        .await;
+        sleep(Duration::from_secs(1));
         i = (i+1)%3;
 
     }
@@ -48,7 +50,7 @@ async fn main(){
 
 async fn send_request(ip:String) -> Result<String, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-    let request = client.get(ip).header("fn", "init_election")
+    let _request = client.get(ip).header("fn", "init_election")
     .header("id", "1")
     .send().await;
     

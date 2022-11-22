@@ -5,13 +5,10 @@ use std::collections::HashMap;
 use std::env;
 use std::io::prelude::*;
 use std::net::SocketAddr;
-use std::net::TcpStream;
 use std::net::TcpListener;
 
-use std::fs;
 use std::sync::Arc;
 
-use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -21,6 +18,7 @@ use tokio::task;
 // use tokio::sync::Mutex;
 use futures::lock::Mutex;
 
+#[derive(Clone)]
 struct ServersInfo {
     id_to_ip: Arc<Mutex<HashMap<String, String>>>,
     pub my_id : Arc<Mutex<String>>,
@@ -46,19 +44,11 @@ impl ServersInfo {
         }
     }
 }
+
+
+#[derive(Clone)]
 struct Server {
     servers_info: ServersInfo
-}
-async fn send_request() -> Result<String, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let request = client.get("http://10.65.192.142:50051").header("fn", "force_failure")
-    .send()
-    .await?
-    .text()
-    .await?;
-    // let body = client.get("http://127.0.0.1:7878").send()
-
-    Ok(request)
 }
 
 impl Server {
@@ -87,12 +77,11 @@ impl Server {
             }
         }
         println!("min_id: {}", min_id);
-
+        let client = reqwest::Client::new();
         match map.get(&min_id.to_string()){
             Some(ip) => {
                 println!("Sending request to: {}", ip);
-                let client = reqwest::Client::new();
-                let _request = client.get("http://10.65.192.142:50050")
+                let _request = client.get(ip)
                 .header("fn", "force_failure")
                 .send().await;
                
@@ -104,48 +93,56 @@ impl Server {
 
         
 
-        let _res = send_request().await;
-        println!("---------------------------");
+        // let _res = send_request().await;
+        println!("-------------Finished--------------");
         
         Ok(format!("min_id: {}", min_id))
 
     }
 
-    async fn force_failure(&self, headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
+    async fn force_failure(&self, _headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
         println!("-------------Force failure called from {}:{}-------------", requester_info.ip(), requester_info.port());
         sleep(Duration::from_secs(5));
         println!("Server is UP again");
 
         let mut ip_map = self.servers_info.id_to_ip.lock().await;
-        let my_id = self.servers_info.my_id.lock().await;
+        let mut my_id = self.servers_info.my_id.lock().await;
+        println!("my_id that will be removed: {}", *my_id);
+        println!("ip map: {:?}", ip_map);
         
         let my_ip = ip_map.get(&*my_id).unwrap().clone();       // My cuurent ip
-        let max_id = ip_map.keys().max().unwrap().clone();      // Max id in the network
+        
+        let mut max_id = std::i32::MIN;
+        for (key, _value) in &*ip_map {
+            if key.parse::<i32>().unwrap() > max_id {
+                max_id = key.parse::<i32>().unwrap();
+            }
+        }
+        println!("max_id: {}", max_id);
         ip_map.remove(&*my_id);                 // Remove my id from the map
         
-        let id_as_int = max_id.parse::<i32>().unwrap();        // Convert max id to int
+        let id_as_int = max_id;         // Convert max id to int
         let new_id = id_as_int + 1;     // Increment max id by 1
         println!("Removed myself from the map");
 
 
         ip_map.insert(new_id.to_string(), my_ip.clone());
-        println!("Inserted new id in the map");
-        
+        println!("Inserted new id: {} in the map", new_id);
+        println!("ip map: {:?}", ip_map);
+        let client = reqwest::Client::new();
         for (key, value) in &*ip_map {
-            if key != &*my_id {
-                let client = reqwest::Client::new();
+            if key != &new_id.to_string() {
                 let _request = client.get(value).header("fn", "broadcast_id")
                 .header("old_id", &*my_id)
                 .header("new_id", &new_id.to_string())
                 .header("new_ip", &my_ip)
                 .send()
-                .await?
-                .text()
-                .await?;
+                .await;
+                println!("Sent broadcast_id to {}", value);
             }
             println!("Server id: {} --> IP {}", key, value);
         }
-        
+        *my_id = new_id.to_string();    // Update my id
         println!("---------------------------");
         
         
@@ -184,7 +181,7 @@ impl Server {
         Ok(format!("Broadcast id called"))
     }
 
-    async fn ping(&self, headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
+    async fn ping(&self, _headers: & mut [Header<'_>],requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
         println!("Ping called");
         let client = reqwest::Client::new();
         let _request = client.get(requester_info.ip().to_string()).header("fn", "force_failure")
@@ -228,38 +225,49 @@ async fn main() {
     println!("Server3 listening on {}", ip3);
 
     // let _servers_info = ServersInfo::new(ip1, ip2, ip3, main_server_index.to_string());
-    let ip1_ref = Arc::new(Mutex::new(ip1));
-    let ip2_ref = Arc::new(Mutex::new(ip2));
-    let ip3_ref = Arc::new(Mutex::new(ip3));
-    let my_id_ref = Arc::new(Mutex::new(my_id));
+    // let ip1_ref = Arc::new(Mutex::new(ip1));
+    // let ip2_ref = Arc::new(Mutex::new(ip2));
+    // let ip3_ref = Arc::new(Mutex::new(ip3));
+    // let my_id_ref = Arc::new(Mutex::new(my_id));
     println!("Main server {}", server_addr);
     let listener = TcpListener::bind(server_addr).unwrap();
     
-    
+    // let server = Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string());
+    let server_arc : Arc<Mutex<Server>> = Arc::new(Mutex::new(Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string())));
+
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
+        let mut stream = stream.unwrap();
         //print the incoming request ip  address
-        let ip1_ref = Arc::clone(&ip1_ref);
-        let ip2_ref = Arc::clone(&ip2_ref);
-        let ip3_ref = Arc::clone(&ip3_ref);
-        let my_id_ref = Arc::clone(&my_id_ref);
-        let join = task::spawn(async{
-            handle_connection(stream, ip1_ref, ip2_ref, ip3_ref, my_id_ref).await;
+        // let ip1_ref = Arc::clone(&ip1_ref);
+        // let ip2_ref = Arc::clone(&ip2_ref);
+        // let ip3_ref = Arc::clone(&ip3_ref);
+        // let my_id_ref = Arc::clone(&my_id_ref);
+
+        let mut buffer = [0; 1024];
+        stream.read(&mut buffer).unwrap();
+        let requester_info = stream.peer_addr().unwrap();
+        stream.write("ACKK".as_bytes()).unwrap();
+        stream.flush().unwrap();
+        let s = server_arc.clone();
+        
+        let _join = task::spawn(async move{
+            // let s = server_arc.lock().await;
+            // server.test().await;
+            handle_connection(s, buffer, requester_info).await;
         });
 
     }
 }
 
 
-async fn handle_connection(mut stream: TcpStream, ip1: Arc<Mutex<String>>, ip2:Arc<Mutex<String>>, ip3:Arc<Mutex<String>>, my_id:Arc<Mutex<String>>) {
-    let mut buffer = [0; 1024];
-    stream.read(&mut buffer).unwrap();
+//cargo run  --bin server 10.40.52.93:50050 10.40.52.93:50051 10.40.52.93:50052 0 
+// 10.40.52.93
 
-    // println!("Request: {}", String::from_utf8_lossy(&buffer[..]));
-
+async fn handle_connection(server:Arc<Mutex<Server>>, buffer: [u8; 1024], requester_info: SocketAddr) {
+    
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut req = httparse::Request::new(&mut headers);
-    let res = req.parse(&buffer).unwrap();
+    let _res = req.parse(&buffer).unwrap();
 
     // println!("res: {:?}", res);
     // println!("req: {:?}", req);
@@ -271,13 +279,14 @@ async fn handle_connection(mut stream: TcpStream, ip1: Arc<Mutex<String>>, ip2:A
             // println!("fn_name: {}", fn_name);
         }
     }
-    let ip1 = ip1.lock().await;
-    let ip2 = ip2.lock().await;
-    let ip3 = ip3.lock().await;
-    let my_id = my_id.lock().await;
-    let requester_info = stream.peer_addr().unwrap();
+    // let ip1 = ip1.lock().await;
+    // let ip2 = ip2.lock().await;
+    // let ip3 = ip3.lock().await;
+    // let my_id = my_id.lock().await;
     
-    let server =Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string());
+    
+    // let server =Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string());
+    let server = server.lock().await;
     match fn_name.as_str() {
         "init_election" => {
             let _res = server.init_election(req.headers, requester_info).await;
@@ -298,23 +307,23 @@ async fn handle_connection(mut stream: TcpStream, ip1: Arc<Mutex<String>>, ip2:A
         
     
 
-    let get = b"GET / HTTP/1.1\r\n";
-    let sleep = b"GET /sleep HTTP/1.1\r\n";
+    // let get = b"GET / HTTP/1.1\r\n";
+    // let sleep = b"GET /sleep HTTP/1.1\r\n";
 
-    let (status_line, filename) = if buffer.starts_with(get) {
-        ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
-    } else if buffer.starts_with(sleep) {
-        thread::sleep(Duration::from_secs(5));
-        ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
-    } else {
-        ("HTTP/1.1 404 NOT FOUND\r\n\r\n", "404.html")
-    };
+    // let (status_line, filename) = if buffer.starts_with(get) {
+    //     ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
+    // } else if buffer.starts_with(sleep) {
+    //     thread::sleep(Duration::from_secs(5));
+    //     ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
+    // } else {
+    //     ("HTTP/1.1 404 NOT FOUND\r\n\r\n", "404.html")
+    // };
 
-    let contents = fs::read_to_string(filename).unwrap();
+    // let contents = fs::read_to_string(filename).unwrap();
 
-    let response = format!("{}{}", status_line, contents);
+    // let response = format!("{}{}", status_line, contents);
 
-    stream.write(response.as_bytes()).unwrap();
-    stream.flush().unwrap();
+    // stream.write(response.as_bytes()).unwrap();
+    // stream.flush().unwrap();
 
 }
