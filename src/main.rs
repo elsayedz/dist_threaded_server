@@ -1,4 +1,3 @@
-mod thread_pool;
 use httparse::Header;
 
 use std::collections::HashMap;
@@ -33,11 +32,6 @@ impl ServersInfo {
         ip_id.insert("1".to_string(), _ip2.clone());
         ip_id.insert("2".to_string(), _ip3.clone());
     
-        // println!("------------Constructor-----------");
-        // for (key, value) in &ip_id {
-        //     println!("Server id: {} --> IP {}", key, value);
-        // }
-        
         Self {
             id_to_ip: Arc::new(Mutex::new(ip_id)),
             my_id: Arc::new(Mutex::new(_my_id)),
@@ -224,25 +218,14 @@ async fn main() {
     println!("Server2 listening on {}", ip2);
     println!("Server3 listening on {}", ip3);
 
-    // let _servers_info = ServersInfo::new(ip1, ip2, ip3, main_server_index.to_string());
-    // let ip1_ref = Arc::new(Mutex::new(ip1));
-    // let ip2_ref = Arc::new(Mutex::new(ip2));
-    // let ip3_ref = Arc::new(Mutex::new(ip3));
-    // let my_id_ref = Arc::new(Mutex::new(my_id));
     println!("Main server {}", server_addr);
     let listener = TcpListener::bind(server_addr).unwrap();
     
-    // let server = Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string());
     let server_arc : Arc<Mutex<Server>> = Arc::new(Mutex::new(Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string())));
 
     for stream in listener.incoming() {
         let mut stream = stream.unwrap();
-        //print the incoming request ip  address
-        // let ip1_ref = Arc::clone(&ip1_ref);
-        // let ip2_ref = Arc::clone(&ip2_ref);
-        // let ip3_ref = Arc::clone(&ip3_ref);
-        // let my_id_ref = Arc::clone(&my_id_ref);
-
+    
         let mut buffer = [0; 1024];
         stream.read(&mut buffer).unwrap();
         let requester_info = stream.peer_addr().unwrap();
@@ -251,8 +234,6 @@ async fn main() {
         let s = server_arc.clone();
         
         let _join = task::spawn(async move{
-            // let s = server_arc.lock().await;
-            // server.test().await;
             handle_connection(s, buffer, requester_info).await;
         });
 
