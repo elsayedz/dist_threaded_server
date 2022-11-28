@@ -1,5 +1,6 @@
 use std::env;
 use std::io::Read;
+use std::io::Write;
 use std::net::TcpListener;
 use std::thread::sleep;
 use std::time::Duration;
@@ -29,17 +30,14 @@ async fn main(){
     let var:&usize =&1;
     if init_election_flag == var {
         tokio::task::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
                 let mut rng = ::rand::rngs::StdRng::from_seed(OsRng.gen());
                 let random_index = rng.gen_range(0..=2);
-                println!("Thread spawned");
-                println!("Trying to send to server {}", ips_vec[random_index]);
+                println!("Trying to Election request to server {}", ips_vec[random_index]);
                 
-                let response = send_request(ips_vec[random_index].clone()).await;
-                println!("Sent request to server {}", random_index);
-                println!("Init election response={:?}", response);
+                let _response = send_request(ips_vec[random_index].clone()).await;
             }
         });
     }
@@ -47,22 +45,62 @@ async fn main(){
     let mut i = 0;
 
     
-    // set timeout for client
+    
     loop {
         
         for stream in listener.incoming(){
             let mut stream = stream.unwrap();
-            println!("Request received");
+            //start timer
+            
             let mut buffer = [0; 1024];
             stream.read(&mut buffer).unwrap();
-            
-            let _request = client.get(ips_vec_2[i].clone())
+            let mut headers = [httparse::EMPTY_HEADER; 16];
+            let mut req = httparse::Request::new(&mut headers);
+            let _res = req.parse(&buffer).unwrap();
+
+            let id = req.headers.iter().find(|h| h.name == "id").unwrap().value;
+            println!("id={}", std::str::from_utf8(id).unwrap().to_string());
+
+            let response = client.get(ips_vec_2[i].clone())
             .header("fn", "ping")
-            .timeout(Duration::from_secs(5))
+            .header("id", id)
+            .timeout(Duration::from_secs(1))
             .send()
             .await;
-            sleep(Duration::from_secs(1));
-            i = (i+1)%3;
+
+            match response {
+                Ok(_response) => {
+                    i = (i+1)%3;
+                    stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
+                    stream.flush().unwrap();
+                }
+                Err(_e) => {
+                    println!("Server {} is down", i);
+                    i = (i+1)%3;
+                    loop {
+                        let response = client.get(ips_vec_2[i].clone())
+                        .header("fn", "ping")
+                        .header("id", id)
+                        .timeout(Duration::from_secs(3))
+                        .send()
+                        .await;
+                        match response {
+                            Ok(_response) => {
+                                i = (i+1)%3;
+                                stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
+                                stream.flush().unwrap();
+                                break;
+                            }
+                            Err(_e) => {
+                                println!("WRONG");
+                                stream.write("HTTP/1.1 500 Error\r\n\r\n".as_bytes()).unwrap();
+                                stream.flush().unwrap();
+                                i = (i+1)%3;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
     }
