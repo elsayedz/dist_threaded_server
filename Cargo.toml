@@ -25,3 +25,7 @@ path = "src/middleware.rs"
 [[bin]]
 name = "client"
 path = "src/client.rs"
+
+[[bin]]
+name = "test"
+path = "src/test.rs"

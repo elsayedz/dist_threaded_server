@@ -2,6 +2,7 @@ use httparse::Header;
 
 use std::collections::HashMap;
 use std::env;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::net::SocketAddr;
 use std::net::TcpListener;
@@ -88,9 +89,6 @@ impl Server {
             }
         }
 
-        
-
-        // let _res = send_request().await;
         println!("-------------Finished--------------");
         
         Ok(format!("min_id: {}", min_id))
@@ -186,6 +184,9 @@ impl Server {
 
     async fn ping(&self, headers: & mut [Header<'_>],_requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
         let id = headers.iter().find(|h| h.name == "id").unwrap().value;
+        // let mut success = self.servers_info.successeful_requests.lock().await;
+        // *success += 1;
+        // drop(success);
         println!("Ping called {}", String::from_utf8(id.to_vec()).unwrap());
         Ok(format!("Ping called"))
     }
@@ -222,6 +223,18 @@ async fn main() {
     println!("Server3 listening on {}", ip3);
 
     println!("Main server {}", server_addr);
+
+    // Create output file
+    let path = format!("servers_results/server{}.txt", main_server_index);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(path)
+        .unwrap();
+
+    let mut num_of_failed_requests = 0;
+    let mut total_num_of_requests : i64 = 0;
     let listener = TcpListener::bind(server_addr).unwrap();
     
     let server_arc : Arc<Mutex<Server>> = Arc::new(Mutex::new(Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string())));
@@ -235,16 +248,21 @@ async fn main() {
         let s = server_arc.clone();
         let s_copy = server_arc.clone();
         
+        total_num_of_requests += 1;
         match s_copy.try_lock() {
             Some(_)=>{
                 stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
                 stream.flush().unwrap();
+                if total_num_of_requests % 1000 == 0 {
+                    let _ = writeln!(file, "Total requests: {} Failed requests: {} Successful requests: {}",total_num_of_requests, num_of_failed_requests, total_num_of_requests - num_of_failed_requests);
+                }
                 let _join = task::spawn(async move{
                     handle_connection(s, buffer, requester_info).await;
                 });
             }
             None => {
                 println!("Server is asleep");
+                num_of_failed_requests += 1;
             }
         };
         

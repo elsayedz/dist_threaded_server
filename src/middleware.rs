@@ -56,7 +56,18 @@ async fn main(){
             stream.read(&mut buffer).unwrap();
             let mut headers = [httparse::EMPTY_HEADER; 16];
             let mut req = httparse::Request::new(&mut headers);
-            let _res = req.parse(&buffer).unwrap();
+            let parsed_req = req.parse(&buffer);
+            let _res;
+            // Handle res and check for errors
+            match parsed_req {
+                Ok(_) => {
+                    _res = parsed_req.unwrap();
+                },
+                Err(_) => {
+                    println!("Error parsing request");
+                    continue;
+                },
+            }
 
             let id = req.headers.iter().find(|h| h.name == "id").unwrap().value;
             println!("id={}", std::str::from_utf8(id).unwrap().to_string());
@@ -81,19 +92,19 @@ async fn main(){
                         let response = client.get(ips_vec_2[i].clone())
                         .header("fn", "ping")
                         .header("id", id)
-                        .timeout(Duration::from_secs(3))
+                        .timeout(Duration::from_secs(1))
                         .send()
                         .await;
                         match response {
                             Ok(_response) => {
                                 i = (i+1)%3;
                                 stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
-                                stream.flush().unwrap();
+                                // stream.flush().unwrap();
                                 break;
                             }
                             Err(_e) => {
                                 println!("WRONG");
-                                stream.write("HTTP/1.1 500 Error\r\n\r\n".as_bytes()).unwrap();
+                                // stream.write("HTTP/1.1 500 Error\r\n\r\n".as_bytes()).unwrap();
                                 stream.flush().unwrap();
                                 i = (i+1)%3;
                             }
