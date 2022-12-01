@@ -29,7 +29,7 @@ impl ServersInfo {
     fn new(_ip1:String, _ip2:String, _ip3:String, _my_id:String) -> Self {
 
         let mut ip_id: HashMap<String, String> = HashMap::new();
-        
+        // Assign ids to every server
         ip_id.insert("0".to_string(), _ip1.clone());
         ip_id.insert("1".to_string(), _ip2.clone());
         ip_id.insert("2".to_string(), _ip3.clone());
@@ -184,9 +184,6 @@ impl Server {
 
     async fn ping(&self, headers: & mut [Header<'_>],_requester_info:SocketAddr) -> Result<String, Box<dyn std::error::Error>> {
         let id = headers.iter().find(|h| h.name == "id").unwrap().value;
-        // let mut success = self.servers_info.successeful_requests.lock().await;
-        // *success += 1;
-        // drop(success);
         println!("Ping called {}", String::from_utf8(id.to_vec()).unwrap());
         Ok(format!("Ping called"))
     }
@@ -249,18 +246,24 @@ async fn main() {
         let s_copy = server_arc.clone();
         
         total_num_of_requests += 1;
+        
+        // Try to accuire lock
+        // If lock is not available, then the server is down
         match s_copy.try_lock() {
             Some(_)=>{
                 stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
                 stream.flush().unwrap();
+                // Write output to file for every 1000 requests
                 if total_num_of_requests % 1000 == 0 {
                     let _ = writeln!(file, "Total requests: {} Failed requests: {} Successful requests: {}",total_num_of_requests, num_of_failed_requests, total_num_of_requests - num_of_failed_requests);
                 }
+                //Spawn a new thread to handle the request
                 let _join = task::spawn(async move{
                     handle_connection(s, buffer, requester_info).await;
                 });
             }
             None => {
+                //Failed to accuire lock and increment number of failed request
                 println!("Server is asleep");
                 num_of_failed_requests += 1;
             }
@@ -269,28 +272,20 @@ async fn main() {
     }
 }
 
-
-//cargo run  --bin server 10.40.52.93:50050 10.40.52.93:50051 10.40.52.93:50052 0 
-// 10.40.52.93
-
 async fn handle_connection(server:Arc<Mutex<Server>>, buffer: [u8; 1024], requester_info: SocketAddr) {
     
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut req = httparse::Request::new(&mut headers);
     let _res = req.parse(&buffer).unwrap();
 
-    // println!("res: {:?}", res);
-    // println!("req: {:?}", req);
-    
     let mut fn_name: String = String::new();
+    // Get function name to call from header
     for header in req.headers[..].iter() {
         if header.name == "fn" {
             fn_name = std::str::from_utf8(header.value).unwrap().to_string();
-            // println!("fn_name: {}", fn_name);
         }
     }
     
-    // let server =Server::new(ip1.to_string(), ip2.to_string(), ip3.to_string(), my_id.to_string());
     let server = server.lock().await;
     match fn_name.as_str() {
         "init_election" => {
@@ -309,26 +304,4 @@ async fn handle_connection(server:Arc<Mutex<Server>>, buffer: [u8; 1024], reques
             println!("No function found");
         }
     }
-        
-    
-
-    // let get = b"GET / HTTP/1.1\r\n";
-    // let sleep = b"GET /sleep HTTP/1.1\r\n";
-
-    // let (status_line, filename) = if buffer.starts_with(get) {
-    //     ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
-    // } else if buffer.starts_with(sleep) {
-    //     thread::sleep(Duration::from_secs(5));
-    //     ("HTTP/1.1 200 OK\r\n\r\n", "hello.html")
-    // } else {
-    //     ("HTTP/1.1 404 NOT FOUND\r\n\r\n", "404.html")
-    // };
-
-    // let contents = fs::read_to_string(filename).unwrap();
-
-    // let response = format!("{}{}", status_line, contents);
-
-    // stream.write(response.as_bytes()).unwrap();
-    // stream.flush().unwrap();
-
 }

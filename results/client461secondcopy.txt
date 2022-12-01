@@ -1,0 +1,1 @@
+Average response time: 1741.383 ms for batch number 10 Total Failed Requests: 79

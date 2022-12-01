@@ -17,7 +17,7 @@ async fn main(){
         let client = reqwest::Client::new();
         let mut i :usize = 1;
         
-        let path = format!("results/client{}copy.txt", client_num);
+        let path = format!("results/client{}secondcopy.txt", client_num);
         let mut file = OpenOptions::new()
             .write(true)
             .append(true)
@@ -35,7 +35,6 @@ async fn main(){
             let _request = client.get("http://127.0.0.1:8000")
             .header("fn", "ping")
             .header("id", i.to_string())
-            .timeout(Duration::from_secs(5))
             .send()
             .await;
             
@@ -73,7 +72,7 @@ async fn main(){
                 }
                 batch_number += 1.0;
             }
-            sleep(Duration::from_millis(1000));
+            sleep(Duration::from_millis(100));
             i+=1;
         }
       

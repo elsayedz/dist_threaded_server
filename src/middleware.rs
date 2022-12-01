@@ -29,13 +29,16 @@ async fn main(){
     
     let var:&usize =&1;
     if init_election_flag == var {
+        // Spawn a thread to send an init election request every 1 min
         tokio::task::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
                 let mut rng = ::rand::rngs::StdRng::from_seed(OsRng.gen());
                 let random_index = rng.gen_range(0..=2);
-                println!("Trying to Election request to server {}", ips_vec[random_index]);
+                
+                // Every time we choose a random node to init the election
+                println!("Sending Election request to server {}", ips_vec[random_index]);
                 
                 let _response = send_request(ips_vec[random_index].clone()).await;
             }
@@ -48,10 +51,9 @@ async fn main(){
     
     loop {
         
+        // Listen to requests from the client
         for stream in listener.incoming(){
             let mut stream = stream.unwrap();
-            //start timer
-            
             let mut buffer = [0; 1024];
             stream.read(&mut buffer).unwrap();
             let mut headers = [httparse::EMPTY_HEADER; 16];
@@ -88,6 +90,7 @@ async fn main(){
                 Err(_e) => {
                     println!("Server {} is down", i);
                     i = (i+1)%3;
+                    // If server is down we retry the request to the next server
                     loop {
                         let response = client.get(ips_vec_2[i].clone())
                         .header("fn", "ping")
@@ -99,12 +102,10 @@ async fn main(){
                             Ok(_response) => {
                                 i = (i+1)%3;
                                 stream.write("HTTP/1.1 200 OK\r\n\r\n".as_bytes()).unwrap();
-                                // stream.flush().unwrap();
                                 break;
                             }
                             Err(_e) => {
                                 println!("WRONG");
-                                // stream.write("HTTP/1.1 500 Error\r\n\r\n".as_bytes()).unwrap();
                                 stream.flush().unwrap();
                                 i = (i+1)%3;
                             }

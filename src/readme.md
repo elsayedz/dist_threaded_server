@@ -1,1 +1,0 @@
-We choose to implement a thread-per request architecture to use a thread to serve each request the server receives
